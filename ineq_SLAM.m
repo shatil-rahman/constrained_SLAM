@@ -29,6 +29,7 @@ L_k = @(X_op) [T*cos(X_op(3)), 0;
 
 g_r_k = @(X_L, X) sqrt((X_L(2) - X(2)-d*sin(X(3))).^2 + (X_L(1) - X(1)-d*cos(X(3))).^2);
 g_b_k = @(X_L, X) wrapToPi(atan2(X_L(2) - X(2)-d*sin(X(3)), X_L(1) - X(1)-d*cos(X(3))) - X(3));
+%g_b_k = @(X_L, X) atan2(X_L(2) - X(2)-d*sin(X(3)), X_L(1) - X(1)-d*cos(X(3))) - X(3);
 
 
 
@@ -61,7 +62,6 @@ end
 X_L_op = X_L_0;
 
 
-%% Main iterative loop
  %%Allocating space for the various sparse matrices
     H_motion = spalloc(K,K, (K + dim*(K-dim)));
     H_obs = spalloc(N,K,dim*N);
@@ -70,12 +70,24 @@ X_L_op = X_L_0;
     W_obs_inv = sparse(1:N,1:N,2*N);
     W_inv = [];
     eps = 0.000001;
+    eps_bound = 1.0;
     X_last = [];
     gradJ = [];
     HessJ = [];
+    
+
+x0 = [X_op; X_L_op];
+options = optimoptions('fmincon','Algorithm','interior-point','SpecifyObjectiveGradient',true,...
+                        'SpecifyConstraintGradient',true,'HessianFcn',@hessianfcn,'PlotFcn','optimplotfval',...
+                        'Display','iter-detailed');
+                    
+[X, fval, exitflag, output] = fmincon(@objectiveFunc, x0,[],[],[],[],[],[],@constraints,options);
+                    
+    %% Function definitions
+    
+    function [System_vector, System_matrix] = updateGradHess(X_op, X_L_op)
      
-    function [System_matrix, System_vector] = updateGradHess(X_op, X_L_op)
-     
+        X_op(3:3:end) = wrapToPi(X_op(3:3:end));
         %%Column by column create the H and W matrices corresponding to the process
         meas_no = 1;
         for k = 1:dim:K-dim
@@ -122,6 +134,7 @@ X_L_op = X_L_0;
         W_inv = [W_inv_motion, sparse(K,N); sparse(N,K), W_obs_inv];
 
         System_matrix = (H.'*W_inv*H);
+        System_matrix = System_matrix(4:end,4:end);
 
         %% System Information Vector
 
@@ -154,12 +167,14 @@ X_L_op = X_L_0;
         end
 
         e_op = [ e_op_X; e_op_y];
-        System_vector = H.'*W_inv*e_op; 
+        System_vector = -H.'*W_inv*e_op;
+        System_vector = System_vector(4:end);
     end
 
     function [J, grad] = objectiveFunc(X)
      
         X_state = X(1:end-M);
+        X_state(3:3:end) = wrapToPi(X_state(3:3:end));
         X_L = X(end-M+1:end);
         e_op_X = zeros(K,1);
         e_op_X(1:dim) = X_0(1:dim) - X_state(1:dim);
@@ -188,14 +203,17 @@ X_L_op = X_L_0;
                     continue
                 else
                     e_op_y(row) = Y_r(j,m) - g_r_k(X_L(2*m -1:2*m),X_state(dim*j-2:dim*j));
-                    e_op_y(row+1) = wrapToPi(Y_b(j,m) - g_b_k(X_L(2*m -1:2*m),X_state(dim*j-2:dim*j)));
+                    e_op_y(row+1) = wrapToPi(Y_b(j,m)) - wrapToPi(g_b_k(X_L(2*m -1:2*m),X_state(dim*j-2:dim*j)));
+                    %e_op_y(row+1) = Y_b(j,m) - g_b_k(X_L(2*m -1:2*m),X_state(dim*j-2:dim*j));
                     row = row + 2;
                 end
             end
         end
 
         e_op = [ e_op_X; e_op_y];
-        J = 0.5* e_op.'*W_inv*e_op;
+        e_op = e_op(4:end);
+        
+        J = 0.5* e_op.'*W_inv(4:end,4:end)*e_op;
         
         
     end
@@ -207,23 +225,25 @@ X_L_op = X_L_0;
         X_L = X(end-M+1:end);
         
         c_no = 1;
-        c = zeros(C*2);
-        J_c = spalloc(C*2,length(X));
-        for j = 1:length(constr_L)
+        c = zeros(C*2,1);
+        J_c = spalloc(C*2,length(X),4*C);
+        for j = 1:C
             m_1= constr_L(j,1);
             m_2= constr_L(j,2);
-            const_L1 = X_L(2*m_1-1:2*m_1);
-            const_L2 = X_L(2*m_2-1:2*m_2);
+            L1 = X_L(2*m_1-1:2*m_1);
+            L2 = X_L(2*m_2-1:2*m_2);
             
-            c(c_no) = dist(const_L1, const_L2) - Y_const(j) - eps_bound;
-            c(c_no + 1) = -dist(const_L1, const_L2) + Y_const(j) - eps_bound;
+            c(c_no) = dist(L1, L2) - Y_const(j) - eps_bound;
+            c(c_no + 1) = -dist(L1, L2) + Y_const(j) - eps_bound;
             
-            J_c(c_no,K + 2*m_1-1:2*m_1) = [const_L1(1) - const_L2(1), const_L1(2) - const_L2(2)]./dist(const_l1,const_L2);
-            J_c(c_no,K + 2*m_2-1:2*m_2) = [const_L2(1) - const_L1(1), const_L2(2) - const_L1(2)]./dist(const_l1,const_L2);
-            J_c(c_no+1,K + 2*m_1-1:2*m_1) = -J_c(c_no,K + 2*m_1-1:2*m_1);
-            J_c(c_no+1,K + 2*m_2-1:2*m_2) = -J_c(c_no,K + 2*m_2-1:2*m_2); 
+            J_c(c_no,K + 2*m_1-1:K+2*m_1) = [L1(1) - L2(1), L1(2) - L2(2)]./dist(L1,L2);
+            J_c(c_no,K + 2*m_2-1:K+2*m_2) = [L2(1) - L1(1), L2(2) - L1(2)]./dist(L1,L2);
+            J_c(c_no+1,K + 2*m_1-1:K+2*m_1) = -J_c(c_no,K + 2*m_1-1:K+2*m_1);
+            J_c(c_no+1,K + 2*m_2-1:K+2*m_2) = -J_c(c_no,K + 2*m_2-1:K+2*m_2); 
             
             gc = J_c.';
+            
+            c_no = c_no + 2;
         end
         
         ceq = [];
@@ -231,32 +251,60 @@ X_L_op = X_L_0;
     end
 
 
-    function [c, gc, ceq, gceq] = gradfunc(X)
-       c =  sym(zeros(1,2*C));
-       c_no = 1;
-       for j = 1:C
-           m_1= constr_L(j,1);
-           m_2= constr_L(j,2);
-           c(c_no) = sqrt((X(K + 2*m_2-1) - X(K + 2*m_1-1)).^2 + (X(K + 2*m_2) - X(K + 2*m_1)).^2) - Y_const(j) - eps_bound;
-           c(c_no + 1) = -sqrt((X(K + 2*m_2-1) - X(K + 2*m_1-1)).^2 + (X(K + 2*m_2) - X(K + 2*m_1)).^2) + Y_const(j) - eps_bound;
-           c_no = c_no + 2;
-       end
-       
-       
-       
-    end
 
     function hessian = hessianfcn(X,lambda)
+        dist = @(L1,L2) sqrt((L2(1)-L1(1)).^2 + (L2(2)-L1(2)).^2);
+        
+        
+        X_state = X(1:end-M);
+        X_state(3:3:end) = wrapToPi(X_state(3:3:end));
+        X_L = X(end-M+1:end);
+        
         if ~isequal(X,X_last)
             [gradJ, HessJ] = updateGradHess(X_state, X_L);
             X_last = X;
         end
         hessian = HessJ;
         
+        
+        c_no = 1;
+
         for j=1:C
+            m_1= constr_L(j,1);
+            m_2= constr_L(j,2);
+            L1 = X_L(2*m_1-1:2*m_1);
+            L2 = X_L(2*m_2-1:2*m_2);
             
-            hess_c_j(
+            dx1_dx1 = 1/dist(L1,L2) - (L1(1)-L2(1)).^2/(dist(L1,L2)^.3);
+            dy1_dy1 = 1/dist(L1,L2) - (L1(2)-L2(2)).^2/(dist(L1,L2)^.3);
+            dx1_dy1 = -((L1(1)-L2(1))*(L1(2)-L2(2)))/(dist(L1,L2).^3);
+             
             
+            %dx1 row
+            hessian(K+2*m_1-1,K+2*m_1-1) = hessian(K+2*m_1-1,K+2*m_1-1) + lambda.ineqnonlin(c_no).*dx1_dx1 + lambda.ineqnonlin(c_no+1).*(-dx1_dx1);
+            hessian(K+2*m_1-1,K+2*m_1)   = hessian(K+2*m_1-1,K+2*m_1) + lambda.ineqnonlin(c_no).*dx1_dy1+ lambda.ineqnonlin(c_no+1).*(-dx1_dy1);
+            hessian(K+2*m_1-1,K+2*m_2-1) = hessian(K+2*m_1-1,K+2*m_2-1) + lambda.ineqnonlin(c_no).*(-dx1_dx1) + lambda.ineqnonlin(c_no+1).*dx1_dx1;
+            hessian(K+2*m_1-1,K+2*m_2)   = hessian(K+2*m_1-1,K+2*m_2) + lambda.ineqnonlin(c_no).*(-dx1_dy1) + lambda.ineqnonlin(c_no+1).*dx1_dy1;
+            
+            %dy1 row
+            hessian(K+2*m_1,K+2*m_1-1) = hessian(K+2*m_1,K+2*m_1-1) + lambda.ineqnonlin(c_no).*dx1_dy1 + lambda.ineqnonlin(c_no+1).*(-dx1_dy1);
+            hessian(K+2*m_1,K+2*m_1)   = hessian(K+2*m_1,K+2*m_1) + lambda.ineqnonlin(c_no).*dy1_dy1+ lambda.ineqnonlin(c_no+1).*(-dy1_dy1);
+            hessian(K+2*m_1,K+2*m_2-1) = hessian(K+2*m_1,K+2*m_2-1) + lambda.ineqnonlin(c_no).*(-dx1_dy1) + lambda.ineqnonlin(c_no+1).*dx1_dy1;
+            hessian(K+2*m_1,K+2*m_2)   = hessian(K+2*m_1,K+2*m_2) + lambda.ineqnonlin(c_no).*(-dy1_dy1) + lambda.ineqnonlin(c_no+1).*dy1_dy1;
+            
+            %dx2 row
+            hessian(K+2*m_2-1,K+2*m_1-1) = hessian(K+2*m_2-1,K+2*m_1-1) + -1*(lambda.ineqnonlin(c_no).*dx1_dx1 + lambda.ineqnonlin(c_no+1).*(-dx1_dx1));
+            hessian(K+2*m_2-1,K+2*m_1) = hessian(K+2*m_2-1,K+2*m_1) + -1*(lambda.ineqnonlin(c_no).*dx1_dy1+ lambda.ineqnonlin(c_no+1).*(-dx1_dy1));
+            hessian(K+2*m_2-1,K+2*m_2-1) = hessian(K+2*m_2-1,K+2*m_2-1) + -1*(lambda.ineqnonlin(c_no).*(-dx1_dx1) + lambda.ineqnonlin(c_no+1).*dx1_dx1);
+            hessian(K+2*m_2-1,K+2*m_2) = hessian(K+2*m_2-1,K+2*m_2) + -1*(lambda.ineqnonlin(c_no).*(-dx1_dy1) + lambda.ineqnonlin(c_no+1).*dx1_dy1);
+            
+            %dy2 row
+            hessian(K+2*m_2,K+2*m_1-1) = hessian(K+2*m_1,K+2*m_1-1) + -1*(lambda.ineqnonlin(c_no).*dx1_dy1 + lambda.ineqnonlin(c_no+1).*(-dx1_dy1));
+            hessian(K+2*m_2,K+2*m_1)   = hessian(K+2*m_1,K+2*m_1) + -1*(lambda.ineqnonlin(c_no).*dy1_dy1+ lambda.ineqnonlin(c_no+1).*(-dy1_dy1));
+            hessian(K+2*m_2,K+2*m_2-1) = hessian(K+2*m_1,K+2*m_2-1) + -1*(lambda.ineqnonlin(c_no).*(-dx1_dy1) + lambda.ineqnonlin(c_no+1).*dx1_dy1);
+            hessian(K+2*m_2,K+2*m_2)   = hessian(K+2*m_1,K+2*m_2) + -1*(lambda.ineqnonlin(c_no).*(-dy1_dy1) + lambda.ineqnonlin(c_no+1).*dy1_dy1);
+            
+            c_no = c_no + 2;
         end
         
     end
