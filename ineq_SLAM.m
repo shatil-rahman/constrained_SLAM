@@ -76,7 +76,7 @@ X_L_op = X_L_0;
     HessJ = [];
     
 
-x0 = [X_op; X_L_op];
+x0 = [X_op(4:end); X_L_op];
 options = optimoptions('fmincon','Algorithm','interior-point','SpecifyObjectiveGradient',true,...
                         'SpecifyConstraintGradient',true,'HessianFcn',@hessianfcn,'PlotFcn','optimplotfval',...
                         'Display','iter-detailed');
@@ -86,7 +86,7 @@ options = optimoptions('fmincon','Algorithm','interior-point','SpecifyObjectiveG
     %% Function definitions
     
     function [System_vector, System_matrix] = updateGradHess(X_op, X_L_op)
-     
+        X_op = [X_0; X_op];
         X_op(3:3:end) = wrapToPi(X_op(3:3:end));
         %%Column by column create the H and W matrices corresponding to the process
         meas_no = 1;
@@ -172,7 +172,7 @@ options = optimoptions('fmincon','Algorithm','interior-point','SpecifyObjectiveG
     end
 
     function [J, grad] = objectiveFunc(X)
-     
+        X = [X_0; X];
         X_state = X(1:end-M);
         X_state(3:3:end) = wrapToPi(X_state(3:3:end));
         X_L = X(end-M+1:end);
@@ -220,7 +220,7 @@ options = optimoptions('fmincon','Algorithm','interior-point','SpecifyObjectiveG
 
     function [c, ceq, gc, geq] = constraints(X)
         dist = @(L1,L2) sqrt((L2(1)-L1(1)).^2 + (L2(2)-L1(2)).^2);
-        
+        X = [X_0, X];
         X_state = X(1:end-M);
         X_L = X(end-M+1:end);
         
@@ -241,10 +241,12 @@ options = optimoptions('fmincon','Algorithm','interior-point','SpecifyObjectiveG
             J_c(c_no+1,K + 2*m_1-1:K+2*m_1) = -J_c(c_no,K + 2*m_1-1:K+2*m_1);
             J_c(c_no+1,K + 2*m_2-1:K+2*m_2) = -J_c(c_no,K + 2*m_2-1:K+2*m_2); 
             
-            gc = J_c.';
+            
             
             c_no = c_no + 2;
         end
+        J_c = J_c(:,4:end);
+        gc = J_c.';
         
         ceq = [];
         geq = [];
@@ -255,7 +257,7 @@ options = optimoptions('fmincon','Algorithm','interior-point','SpecifyObjectiveG
     function hessian = hessianfcn(X,lambda)
         dist = @(L1,L2) sqrt((L2(1)-L1(1)).^2 + (L2(2)-L1(2)).^2);
         
-        
+        X = [X_0, X];
         X_state = X(1:end-M);
         X_state(3:3:end) = wrapToPi(X_state(3:3:end));
         X_L = X(end-M+1:end);
@@ -306,8 +308,7 @@ options = optimoptions('fmincon','Algorithm','interior-point','SpecifyObjectiveG
             
             c_no = c_no + 2;
         end
-        
+        hessian = hessian(4:end,4:end);
     end
 end
     %P = speye(K,K)/System_matrix;
-
