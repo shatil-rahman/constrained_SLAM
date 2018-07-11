@@ -1,13 +1,5 @@
-%% Plotting
-% pos_error = X_estimate(1:2:end) - X(1,:).';
-% vel_error = X_estimate(2:2:end) - X(2,:).';
-% pos_error_con = X_estimate_Con(1:2:end) - X(1,:).';
-% vel_error_con = X_estimate_Con(2:2:end) - X(2,:).';
-% pos_error_pen = X_estimate_Pen(1:2:end) - X(1,:).';
-% vel_error_pen = X_estimate_Pen(2:2:end) - X(2,:).';
-% three_sig_bounds = 3.*(sqrt(P_x));
-% three_sig_bounds_con = 3.*(sqrt(P_x_Con));
-% three_sig_bounds_pen = 3.*(sqrt(P_x_Pen));
+
+
 
 %% Re-aligning the estimates for comparison
 
@@ -15,7 +7,10 @@
 [x_constr, y_constr, l_constr] = align(q_constr,L_constr, x_true(k_start:k_end),y_true(k_start:k_end),l);
 [x_penalty, y_penalty, l_penalty] = align(q_penalty,L_penalty, x_true(k_start:k_end),y_true(k_start:k_end),l);
 
-
+%% RMS error calculations
+rms_batch = norm([x_true(k_start:k_end)-x_batch; y_true(k_start:k_end) - y_batch; l(:,1) - l_batch(:,1); l(:,2) - l_batch(:,2)]);
+rms_constr = norm([x_true(k_start:k_end)-x_constr; y_true(k_start:k_end) - y_constr; l(:,1) - l_constr(:,1); l(:,2) - l_constr(:,2)]);
+rms_penalty = norm([x_true(k_start:k_end)-x_penalty; y_true(k_start:k_end) - y_penalty; l(:,1) - l_penalty(:,1); l(:,2) - l_penalty(:,2)]);
 %% Plotting
 
 figure
