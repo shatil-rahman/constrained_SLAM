@@ -1,6 +1,14 @@
 function [ rel_disp, land_pairs, covariance ] = inv_meas(range, bearing, R_range,R_bearing)
 %UNTITLED Computes the relative displacements between landmarks at a given
 %for measurements at a given timestep
+    if nnz(range)<2
+        nnz(range)
+        rel_disp = [];
+        land_pairs = [];
+        covariance = [];
+        return
+    end
+        
     n_rel = nchoosek(nnz(range),2);
     land_pairs = zeros(n_rel,2);
     rel_disp = zeros(n_rel,2);

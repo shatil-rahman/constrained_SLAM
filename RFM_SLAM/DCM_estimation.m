@@ -1,5 +1,15 @@
-function [Cqp] = DCM_estimation( d_p, d_q,odom,odom_var,T,w_p, w_q,pairs_p, pairs_q )
+function [Cqp, std_dev] = DCM_estimation( d_p, d_q,odom,odom_var,T,w_p, w_q,pairs_p, pairs_q )
 %DCM_ESTIMATION Finds Cqp such that d_q = Cqp*dp
+
+    %% If one of the poses has only seen 1 landmark, use odometry only
+    
+    if isempty(d_p) || isempty(d_q)
+       Cqp = [cos(T*odom), sin(T*odom), 0;
+              -sin(T*odom), cos(T*odom),0;
+              0, 0, 1];
+       std_dev = odom_var;
+       return
+    end
 
 
     %% Picking out the common relative feature measurements
@@ -84,7 +94,9 @@ function [Cqp] = DCM_estimation( d_p, d_q,odom,odom_var,T,w_p, w_q,pairs_p, pair
                 p(3), 0, -p(1);
                 -p(2), p(1), 0];
     Cqp = (eye(3) + temp)\((eye(3)- temp));
-    
+    covariance = inv(A_k);
+    sigma_3 = covariance(3,3);
+    std_dev = ((2/(1+p(3)^2))^2)*sigma_3;
 
 end
 
