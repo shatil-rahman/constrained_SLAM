@@ -1,10 +1,11 @@
-function [X_op,X_L_op, rms_error_list, P_states, P_landmarks]  = GN_Estimator( X_0,P_0,X_L_0, Q, R, Y_v,Y_w, Y_r,Y_b, t, d, x_true, y_true, th_true, l_true)
+function [X_op,X_L_op, rms_error_list, P_states, P_landmarks]  = constrained_SLAM( X_0,P_0,X_L_0, Q, R, Y_v,Y_w, Y_r,Y_b,Y_const, t, d, constr_L, x_true, y_true, th_true, l_true)
 %GN_ESTIMATOR Summary of this function goes here
 %% Some matrix dimensions
 M = 17*2; %No of landmarks times dimension of landmark position in the state
 dim = length(X_0); %No of trajectory state variables at timestep k
 K = dim*(length(t)); %Dimension of the full trajectory
 N = 2*nnz(Y_r); % Dimension of all available range and bearing measurements
+C = 2*length(Y_const); %No of constraints
 T = t(2) - t(1);
 
 %% For Plotting
@@ -29,7 +30,7 @@ L_k = @(X_op) [T*cos(X_op(3)), 0;
 g_r_k = @(X_L, X) sqrt((X_L(2) - X(2)-d*sin(X(3))).^2 + (X_L(1) - X(1)-d*cos(X(3))).^2);
 g_b_k = @(X_L, X) atan2(X_L(2) - X(2)-d*sin(X(3)), X_L(1) - X(1)-d*cos(X(3))) - X(3);
 
-
+g_constraint = @(X_L1,X_L2) sqrt((X_L1(1) - X_L2(1)).^2 + (X_L1(2) - X_L2(2)).^2);
 
 G1_r_mk = @(X_L, X) [X(1) + d*cos(X(3)) - X_L(1), X(2) + d*sin(X(3)) - X_L(2),...
           ((d*sin(X(3)))*(- X(1) - d*cos(X(3)) + X_L(1)) -(d*cos(X(3)))*(-X(2) - d*sin(X(3)) + X_L(2))) ]./g_r_k(X_L,X);
@@ -44,11 +45,13 @@ G2_r_mk = @(X_L, X) [X_L(1) - X(1) - d*cos(X(3)), X_L(2) - X(2) - d*sin(X(3))]./
 G2_b_mk = @(X_L, X) [-X_L(2) + X(2) + d*sin(X(3)), X_L(1) - X(1) - d*cos(X(3))]./g_r_k(X_L,X).^2;
 
 G2_mk = @(X_L, X) [G2_r_mk(X_L,X); G2_b_mk(X_L,X)];
+GL1_constraint = @(X_L1,X_L2) [X_L1(1) - X_L2(1), X_L1(2) - X_L2(2)]./g_constraint(X_L1,X_L2);
+GL2_constraint = @(X_L1,X_L2) [X_L2(1) - X_L1(1), X_L2(2) - X_L1(2)]./g_constraint(X_L1,X_L2);
 
 
 %% Initial States
 
-X_op = randn(K,1);
+X_op = ones(K,1)*10;
 X_op(1:dim) = X_0;
 meas_no = 1;
 for i=2*dim:dim:K
@@ -56,10 +59,11 @@ for i=2*dim:dim:K
     X_op(i) = wrapToPi(X_op(i));
     meas_no = meas_no + 1;
 end
-% X_op(1:3:end) = x_true;
-% X_op(2:3:end) = y_true;
-% X_op(3:3:end) = th_true;
+
 X_L_op = X_L_0;
+
+
+bar = waitbar(0,'Constrained SLAM iteration #1');
 
 %% Main iterative loop
  %%Allocating space for the various sparse matrices
@@ -68,12 +72,11 @@ X_L_op = X_L_0;
     H_obs_2 = zeros(N,M);
     W_inv_motion = spalloc(K,K,dim*K);
     W_obs_inv = sparse(1:N,1:N,2*N);
+    JacC = zeros(C,K+M);
     eps = 0.000001;
-    
-bar = waitbar(0,'Batch SLAM iteration #1');
-
+    eps_bound = 0.003;
 while(1)
- %% System Information Matrix
+ %% Hessian Matrix
     
    
     %%Column by column create the H and W matrices corresponding to the process
@@ -119,18 +122,28 @@ while(1)
         col_s = col_s + dim;
         
     end
+   
+    
+%     const_L1 = X_L_op(2*10-1:2*10);
+%     const_L2 = X_L_op(2*16-1:2*16);
+%     
+%     S(end, K + 2*10-1: K + 2*10) =   GL1_constraint(const_L1,const_L2);
+%     S(end, K + 2*16-1: K + 2*16) =   GL2_constraint(const_L1,const_L2);
     
     
     H = [H_motion,zeros(K,M); H_obs, H_obs_2];
     W_inv = [W_inv_motion, sparse(K,N); sparse(N,K), W_obs_inv];
     
-    System_matrix = (H.'*W_inv*H);
+    HessJ = (H.'*W_inv*H);
     
-    %% System Information Vector
+    
+    
+    %% Gradient
 
     e_op_X = zeros(K,1);
     e_op_X(1:dim) = X_0(1:dim) - X_op(1:dim);
-%     e_op_X(3) = wrapToPi(e_op_X(3));
+    e_op_X(3) = wrapToPi(e_op_X(3));
+    
  
 
     meas_no = 1;
@@ -166,28 +179,61 @@ while(1)
     end
     
     e_op = [ e_op_X; e_op_y];
-    System_vector = H.'*W_inv*e_op;
-
-    %% Gauss-Newton Update
+    gradJ = -H.'*W_inv*e_op;
+    gradJ = gradJ.';
     
-    System_matrix = System_matrix(4:end,4:end);
-    System_vector = System_vector(4:end);
-    step = 1.0;
+    %% Constraints and Constraint Jacobians
 
-    del_X = System_matrix\System_vector;
+    c_no = 1;
+    for i = 1:length(constr_L)
+        m_1= constr_L(i,1);
+        m_2= constr_L(i,2);
+        const_L1 = X_L_op(2*m_1-1:2*m_1);
+        const_L2 = X_L_op(2*m_2-1:2*m_2);
+        JacC(c_no,K + 2*m_1-1:K + 2*m_1)  = GL1_constraint(const_L1,const_L2);
+        JacC(c_no,K + 2*m_2-1:K + 2*m_2) = GL2_constraint(const_L1,const_L2);
+        JacC(c_no + 1,K + 2*m_1-1:K + 2*m_1)  = -GL1_constraint(const_L1,const_L2);
+        JacC(c_no + 1,K + 2*m_2-1:K + 2*m_2) = -GL2_constraint(const_L1,const_L2);
+        c_no = c_no + 2;
+    end
+    
+    
+    constraint_vector = zeros(C,1);
+    c_no = 1;
+    for i =1:length(constr_L)
+        m_1= constr_L(i,1);
+        m_2= constr_L(i,2);
+        const_L1 = X_L_op(2*m_1-1:2*m_1);
+        const_L2 = X_L_op(2*m_2-1:2*m_2);
+        constraint_vector(c_no) =  g_constraint(const_L1,const_L2)- Y_const(i) - eps_bound;
+        constraint_vector(c_no + 1) =  -g_constraint(const_L1,const_L2)+ Y_const(i) - (eps_bound);
+        c_no = c_no + 2;
+    end
+    
+    
+
+    %% Quadratic Programming Update
+    HessJ = HessJ(4:end,4:end);
+    gradJ = gradJ(4:end);
+    JacConstr = JacC(:,4:end);
+  
+    
+    [del_X,fval,exitflag,output,lambda] = quadprog(HessJ,gradJ, JacConstr, -constraint_vector);
     
     mag_del_X = norm(del_X);
-%     del_X_list = [del_X_list; mag_del_X]; % For plotting
+%     rms_error_list = [rms_error_list; mag_del_X]; % For plotting
     
-    X_op(4:end) = X_op(4:end) + step*del_X(1:end-M);
+    X_op(4:end) = X_op(4:end) + del_X(1:end-M);
     X_op(3:3:end) = wrapToPi(X_op(3:3:end));
-    X_L_op(1:end) = X_L_op(1:end) + step*del_X(end-M+1:end);
+%     X_L_op(1:end) = X_L_op(1:end) + del_X(end-M-C+1:end-C);
+%     
+%     lambda_op = lambda_op + del_X(end-C+1:end);
+    X_L_op(1:end) = X_L_op(1:end) + del_X(end-M+1:end);
+    [x_ineq, y_ineq, l_ineq] = align(X_op,X_L_op, x_true,y_true,l_true);
     
-    [x_batch, y_batch, l_batch] = align(X_op,X_L_op, x_true,y_true,l_true);
-    
-    rms_error = norm([x_true-x_batch; y_true - y_batch; l_true(:,1) - l_batch(:,1); l_true(:,2) - l_batch(:,2)]);
+    rms_error = norm([x_true-x_ineq; y_true - y_ineq; l_true(:,1) - l_ineq(:,1); l_true(:,2) - l_ineq(:,2)]);
     rms_error_list = [rms_error_list; rms_error]; % For plotting
-    
+
     if(mag_del_X<0.001 || length(rms_error_list)>200)
         waitbar(1,bar, 'Done!');
         pause(1);
@@ -196,6 +242,6 @@ while(1)
         %P_landmarks = diag(inv(System_matrix(end-1:end,end-1:end)));
         break
     end
-    waitbar(length(rms_error_list)/200, bar, strcat('Batch SLAM Iteration #',num2str(length(rms_error_list)))); 
+    waitbar(length(rms_error_list)/200, bar, strcat('Inequality Constrained SLAM Iteration #',num2str(length(rms_error_list))));
 end
     %P = speye(K,K)/System_matrix;
