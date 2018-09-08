@@ -1,12 +1,12 @@
-clear all
-close all
-clc
+function edges = edge_counter(l,r)
 
-load dataset2.mat
+    edge_counts = zeros(17,1);
+    for i=1:length(l)
+        edge_counts(i) = nnz(r(:,i));
+    end
 
-k_end = 2000;
-
-edge_counts = zeros(17,1);
-for i=1:length(l)
-    edge_counts(i) = nnz(r(1:k_end,i));
+    [b,i] = sort(edge_counts);
+    edges = nchoosek(i(end-3:end),2);
+    edges = edges(1:end-1,:);
+    
 end
