@@ -1,4 +1,4 @@
-function [X_op,X_L_op, del_X_list, P_states, P_landmarks]  = constrained_SLAM( X_0,P_0,X_L_0, Q, R, Y_v,Y_w, Y_r,Y_b,Y_const, t, d, constr_L)
+function [X_op,X_L_op, rms_error_list, P_states, P_landmarks]  = constrained_SLAM( X_0,P_0,X_L_0, Q, R, Y_v,Y_w, Y_r,Y_b,Y_const, t, d, constr_L, x_true, y_true, th_true, l_true)
 %GN_ESTIMATOR Summary of this function goes here
 %% Some matrix dimensions
 M = 17*2; %No of landmarks times dimension of landmark position in the state
@@ -9,7 +9,7 @@ C = length(Y_const); %No of constraints
 T = t(2) - t(1);
 
 %% For Plotting
-del_X_list = [];
+rms_error_list = [];
 
 %% Non-Linear Process Model
 f_k = @(X, U) X + [T*cos(X(3)), 0;
@@ -28,7 +28,7 @@ L_k = @(X_op) [T*cos(X_op(3)), 0;
 %% Non-linear Measurement Model
 
 g_r_k = @(X_L, X) sqrt((X_L(2) - X(2)-d*sin(X(3))).^2 + (X_L(1) - X(1)-d*cos(X(3))).^2);
-g_b_k = @(X_L, X) wrapToPi(atan2(X_L(2) - X(2)-d*sin(X(3)), X_L(1) - X(1)-d*cos(X(3))) - X(3));
+g_b_k = @(X_L, X) atan2(X_L(2) - X(2)-d*sin(X(3)), X_L(1) - X(1)-d*cos(X(3))) - X(3);
 
 g_constraint = @(X_L1,X_L2) sqrt((X_L1(1) - X_L2(1)).^2 + (X_L1(2) - X_L2(2)).^2);
 
@@ -62,7 +62,7 @@ end
 
 X_L_op = X_L_0;
 
-lambda_op = ones(C,1).*200.0;
+lambda_op = zeros(C,1);
 
 bar = waitbar(0,'Constrained SLAM iteration #1');
 
@@ -132,6 +132,7 @@ while(1)
         S(i,K + 2*m_1-1:K + 2*m_1)  = GL1_constraint(const_L1,const_L2);
         S(i,K + 2*m_2-1:K + 2*m_2) = GL2_constraint(const_L1,const_L2);
     end
+    S = sparse(S);
     
 %     const_L1 = X_L_op(2*10-1:2*10);
 %     const_L2 = X_L_op(2*16-1:2*16);
@@ -152,16 +153,20 @@ while(1)
 
     e_op_X = zeros(K,1);
     e_op_X(1:dim) = X_0(1:dim) - X_op(1:dim);
-    e_op_X(3) = wrapToPi(e_op_X(3));
+%     e_op_X(3) = wrapToPi(e_op_X(3));
     
  
 
     meas_no = 1;
     for i=2*dim:dim:K
-%         predicted_X = f_k(X_op(i-(2*dim - 1):i-dim), [Y_v(meas_no);Y_w(meas_no)]);
-%         predicted_X(3) = wrapToPi(predicted_X(3));
-        e_op_X(i-(dim-1):i) = f_k(X_op(i-(2*dim - 1):i-dim), [Y_v(meas_no);Y_w(meas_no)]) - X_op(i-(dim-1):i);
-        e_op_X(i) = wrapToPi(e_op_X(i));
+        predicted_X = f_k(X_op(i-(2*dim - 1):i-dim), [Y_v(meas_no);Y_w(meas_no)]);
+        predicted_X(3) = wrapToPi(predicted_X(3));
+%         e_op_X(i-(dim-1):i) = f_k(X_op(i-(2*dim - 1):i-dim), [Y_v(meas_no);Y_w(meas_no)]) - X_op(i-(dim-1):i);
+        e_op_X(i-(dim-1):i) = predicted_X - X_op(i-(dim-1):i);
+        if(abs(e_op_X(i))) > 5.0
+            e_op_X(i) = predicted_X(3) + X_op(i);
+        end
+%         e_op_X(i) = wrapToPi(e_op_X(i));
         meas_no = meas_no + 1;
     end
 
@@ -173,8 +178,12 @@ while(1)
             if Y_r(i,m) == 0
                 continue
             else
-                e_op_y(row) = Y_r(i,m) - g_r_k(X_L_op(2*m -1:2*m),X_op(dim*i-2:dim*i));
-                e_op_y(row+1) = wrapToPi(Y_b(i,m) - g_b_k(X_L_op(2*m -1:2*m),X_op(dim*i-2:dim*i)));
+                predicted_y_r = g_r_k(X_L_op(2*m -1:2*m),X_op(dim*i-2:dim*i));
+                predicted_y_b =  wrapToPi(g_b_k(X_L_op(2*m -1:2*m),X_op(dim*i-2:dim*i)));
+                e_op_y(row) = Y_r(i,m) - predicted_y_r;
+                e_op_y(row+1) = Y_b(i,m) - predicted_y_b;
+%                 e_op_y(row) = Y_r(i,m) - g_r_k(X_L_op(2*m -1:2*m),X_op(dim*i-2:dim*i));
+%                 e_op_y(row+1) = wrapToPi(Y_b(i,m) - g_b_k(X_L_op(2*m -1:2*m),X_op(dim*i-2:dim*i)));
                 row = row + 2;
             end
         end
@@ -203,15 +212,18 @@ while(1)
     del_X = A_system\B_system;
     
     mag_del_X = norm(del_X);
-    del_X_list = [del_X_list; mag_del_X]; % For plotting
+   
     
     X_op(4:end) = X_op(4:end) + del_X(1:end-M-C);
     X_op(3:3:end) = wrapToPi(X_op(3:3:end));
     X_L_op(1:end) = X_L_op(1:end) + del_X(end-M-C+1:end-C);
-    
+
     lambda_op = lambda_op + del_X(end-C+1:end);
-    
-    if(mag_del_X<0.001 || length(del_X_list)>20)
+
+    rms_error = norm([x_true - X_op(1:3:end);y_true - X_op(2:3:end); th_true - X_op(3:3:end);...
+                l_true(:,1) - X_L_op(1:2:end); l_true(:,2) - X_L_op(2:2:end)]);
+    rms_error_list = [rms_error_list; rms_error]; % For plotting        
+    if(mag_del_X<0.001 || length(rms_error_list)>200)
         waitbar(1,bar, 'Done!');
         pause(1);
         close(bar);
@@ -219,6 +231,6 @@ while(1)
         %P_landmarks = diag(inv(System_matrix(end-1:end,end-1:end)));
         break
     end
-    waitbar(length(del_X_list)/20, bar, strcat('Constrained SLAM Iteration #',num2str(length(del_X_list))));
+    waitbar(length(rms_error_list)/200, bar, strcat('Constrained SLAM Iteration #',num2str(length(rms_error_list))));
 end
     %P = speye(K,K)/System_matrix;
