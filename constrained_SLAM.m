@@ -220,10 +220,15 @@ while(1)
 
     lambda_op = lambda_op + del_X(end-C+1:end);
 
-    rms_error = norm([x_true - X_op(1:3:end);y_true - X_op(2:3:end); th_true - X_op(3:3:end);...
-                l_true(:,1) - X_L_op(1:2:end); l_true(:,2) - X_L_op(2:2:end)]);
-    rms_error_list = [rms_error_list; rms_error]; % For plotting        
-    if(mag_del_X<0.001 || length(rms_error_list)>200)
+%     rms_error = norm([x_true - X_op(1:3:end);y_true - X_op(2:3:end); th_true - X_op(3:3:end);...
+%                 l_true(:,1) - X_L_op(1:2:end); l_true(:,2) - X_L_op(2:2:end)]);
+%     rms_error_list = [rms_error_list; rms_error]; % For plotting
+    
+    [x_eq, y_eq, l_eq] = align(X_op,X_L_op, x_true,y_true,l_true);
+    
+    rms_error = norm([x_true-x_eq; y_true - y_eq; l_true(:,1) - l_eq(:,1); l_true(:,2) - l_eq(:,2)]);
+    rms_error_list = [rms_error_list; rms_error]; % For plotting
+    if(mag_del_X<0.001 || length(rms_error_list)>100)
         waitbar(1,bar, 'Done!');
         pause(1);
         close(bar);

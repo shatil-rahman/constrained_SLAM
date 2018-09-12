@@ -1,4 +1,4 @@
-function edges = edge_counter(l,r)
+function [edges, landmarks] = edge_counter(l,r)
 
     edge_counts = zeros(17,1);
     for i=1:length(l)
@@ -6,7 +6,9 @@ function edges = edge_counter(l,r)
     end
 
     [b,i] = sort(edge_counts);
-    edges = nchoosek(i(end-3:end),2);
-    edges = edges(1:end-1,:);
+    edges = nchoosek(i(end-4:end),2);
+    edges = edges(1:end-3,:);
+    landmarks = sort(i(end-4:end));
+    
     
 end
