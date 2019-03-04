@@ -1,4 +1,4 @@
-function [X_op,X_L_op, rms_error_list, P_states, P_landmarks]  = GN_Estimator( X_0,P_0,X_L_0, Q, R, Y_v,Y_w, Y_r,Y_b, t, d, x_true, y_true, th_true, l_true)
+function [X_op,X_L_op, rms_error_list, P_states, P_landmarks]  = var_rem_SLAM( X_0,P_0,X_L_0, Q, R, Y_v,Y_w, Y_r,Y_b, t, d,constr_L, x_true, y_true, th_true, l_true)
 %GN_ESTIMATOR Summary of this function goes here
 %% Some matrix dimensions
 M = 17*2; %No of landmarks times dimension of landmark position in the state
@@ -70,7 +70,7 @@ X_L_op = X_L_0;
     W_obs_inv = sparse(1:N,1:N,2*N);
     eps = 0.000001;
     
-bar = waitbar(0,'Batch SLAM iteration #1');
+bar = waitbar(0,'Variable Removal SLAM iteration #1');
 
 while(1)
  %% System Information Matrix
@@ -172,6 +172,19 @@ while(1)
     
     System_matrix = System_matrix(4:end,4:end);
     System_vector = System_vector(4:end);
+    
+    %Removing the constrained landmarks
+    ind_removed = [2*constr_L-1; 2*constr_L];
+    ind_removed = ind_removed + K-dim;
+
+    
+    System_matrix = removerows(System_matrix,ind_removed);
+    System_matrix = System_matrix.';
+    System_matrix = removerows(System_matrix,ind_removed);
+    System_matrix = System_matrix.';
+    System_vector = removerows(System_vector,ind_removed);
+    
+    
     step = 1.0;
 
     del_X = System_matrix\System_vector;
@@ -179,13 +192,27 @@ while(1)
     mag_del_X = norm(del_X);
 %     del_X_list = [del_X_list; mag_del_X]; % For plotting
     
-    X_op(4:end) = X_op(4:end) + step*del_X(1:end-M);
+    X_op(4:end) = X_op(4:end) + step*del_X(1:end-(M-length(ind_removed)));
     X_op(3:3:end) = wrapToPi(X_op(3:3:end));
-    X_L_op(1:end) = X_L_op(1:end) + step*del_X(end-M+1:end);
     
-    [x_batch, y_batch, l_batch] = align(X_op,X_L_op, x_true,y_true,l_true);
+    del_X_L = zeros(M,1);
+    counter_constr = 1;
+    counter_meas = 1;
+    for j=1:17
+        if j == constr_L(counter_constr)
+            del_X_L(2*j-1:2*j) = [0;0];
+            counter_constr = counter_constr + 1;
+        else            
+            del_X_L(2*j-1:2*j) = del_X(K-dim + 2*counter_meas-1: K-dim + 2*counter_meas);
+            counter_meas = counter_meas + 1;
+        end
+    end
     
-    rms_error = norm([x_true-x_batch; y_true - y_batch; l_true(:,1) - l_batch(:,1); l_true(:,2) - l_batch(:,2)]);
+    X_L_op(1:end) = X_L_op(1:end) + step*del_X_L;
+    
+    [x_var_rem, y_var_rem, l_var_rem] = align(X_op,X_L_op, x_true,y_true,l_true);
+    
+    rms_error = norm([x_true-x_var_rem; y_true - y_var_rem; l_true(:,1) - l_var_rem(:,1); l_true(:,2) - l_var_rem(:,2)]);
     rms_error_list = [rms_error_list; rms_error]; % For plotting
     
     if(mag_del_X<0.001 || length(rms_error_list)>100)
@@ -196,6 +223,6 @@ while(1)
         %P_landmarks = diag(inv(System_matrix(end-1:end,end-1:end)));
         break
     end
-    waitbar(length(rms_error_list)/200, bar, strcat('Batch SLAM Iteration #',num2str(length(rms_error_list)))); 
+    waitbar(length(rms_error_list)/200, bar, strcat('Variable Removal SLAM Iteration #',num2str(length(rms_error_list)))); 
 end
     %P = speye(K,K)/System_matrix;
